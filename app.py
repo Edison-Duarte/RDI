@@ -3,111 +3,79 @@ import pandas as pd
 import sqlite3
 from datetime import datetime
 
-# Configuração da Página
-st.set_page_config(page_title="Registro de Desenvolvimento Infantil", layout="wide")
+# Configuração inicial
+st.set_page_config(page_title="Registro Escolar", layout="wide", page_icon="📝")
 
-# --- BANCO DE DADOS ---
+# Inicialização do Banco de Dados
 def init_db():
-    conn = sqlite3.connect('escola.db')
+    conn = sqlite3.connect('escola.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS alunos 
-                 (id INTEGER PRIMARY KEY, nome TEXT, info_inicial TEXT)''')
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT, info_inicial TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS registros 
-                 (id INTEGER PRIMARY KEY, aluno_id INTEGER, data_hora TEXT, autor TEXT, relato TEXT)''')
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, aluno_id INTEGER, data_hora TEXT, autor TEXT, relato TEXT)''')
     conn.commit()
     return conn
 
 conn = init_db()
 
-# --- INTERFACE ---
-st.title("📝 Registro de Desenvolvimento Escolar")
+st.title("📝 Registro de Desenvolvimento Infantil")
+st.markdown("---")
 
-# Seção 1: Cadastro de Alunos
-with st.expander("🆕 Cadastrar Novo Aluno"):
-    with st.form("form_cadastro"):
-        nome_aluno = st.text_input("Nome Completo do Aluno")
-        info_inicial = st.text_area("Informações Iniciais (Histórico Prévio, Saúde, etc.)")
-        btn_adicionar = st.form_submit_button("Adicionar Aluno")
-        
-        if btn_adicionar:
-            if nome_aluno:
-                c = conn.cursor()
-                c.execute("INSERT INTO alunos (nome, info_inicial) VALUES (?, ?)", (nome_aluno, info_inicial))
-                conn.commit()
-                st.success(f"Aluno {nome_aluno} cadastrado com sucesso!")
-            else:
-                st.error("O nome do aluno é obrigatório.")
+# --- SEÇÃO: NOVO ALUNO ---
+st.subheader("🆕 Cadastrar Novo Aluno")
+with st.form("form_cadastro", clear_on_submit=True):
+    nome_aluno = st.text_input("Nome Completo do Aluno")
+    info_inicial = st.text_area("Informações Iniciais (Contexto familiar, saúde, etc.)")
+    btn_adicionar = st.form_submit_button("Adicionar Aluno")
+    
+    if btn_adicionar:
+        if nome_aluno:
+            c = conn.cursor()
+            c.execute("INSERT INTO alunos (nome, info_inicial) VALUES (?, ?)", (nome_aluno, info_inicial))
+            conn.commit()
+            st.success(f"✅ {nome_aluno} cadastrado com sucesso!")
+        else:
+            st.error("⚠️ O nome do aluno é obrigatório.")
 
-st.divider()
+st.markdown("---")
 
-# Seção 2: Busca e Seleção
+# --- SEÇÃO: BUSCA E REGISTRO DIÁRIO ---
 st.subheader("🔍 Busca e Seleção")
 
-# Carregar lista de alunos para busca inteligente
-df_alunos = pd.read_sql_query("SELECT * FROM alunos", conn)
+# Carregar alunos para o selectbox inteligente
+df_alunos = pd.read_sql_query("SELECT * FROM alunos ORDER BY nome", conn)
 
 if not df_alunos.empty:
-    # Busca inteligente e Menu suspenso
     lista_nomes = df_alunos['nome'].tolist()
-    aluno_selecionado_nome = st.selectbox("Selecione um aluno para visualizar ou registrar:", [""] + lista_nomes)
+    # O selectbox do Streamlit já possui busca inteligente nativa ao digitar
+    aluno_selecionado = st.selectbox("Selecione o aluno para novo registro:", [""] + lista_nomes)
 
-    if aluno_selecionado_nome != "":
-        aluno_id = df_alunos[df_alunos['nome'] == aluno_selecionado_nome]['id'].values[0]
-        aluno_info = df_alunos[df_alunos['nome'] == aluno_selecionado_nome]['info_inicial'].values[0]
-
-        # Exibição do Histórico
-        st.info(f"**Aluno:** {aluno_selecionado_nome}")
-        st.write(f"**Informação Inicial:** {aluno_info}")
+    if aluno_selecionado:
+        # Pega dados do aluno selecionado
+        aluno_id = df_alunos[df_alunos['nome'] == aluno_selecionado]['id'].values[0]
         
-        st.markdown("### 📜 Histórico de Registros")
-        df_registros = pd.read_sql_query(f"SELECT data_hora, autor, relato FROM registros WHERE aluno_id = {aluno_id} ORDER BY id DESC", conn)
+        st.info(f"**Registrando para:** {aluno_selecionado}")
         
-        if not df_registros.empty:
-            for index, row in df_registros.iterrows():
-                st.markdown(f"**{row['data_hora']} - Por: {row['autor']}**")
-                st.write(row['relato'])
-                st.divider()
-        else:
-            st.write("Nenhum registro diário encontrado.")
-
-        # Novo Registro Diário
-        st.markdown("### ✍️ Novo Registro Diário")
-        with st.form("novo_registro"):
-            autor = st.text_input("Nome do Professor/Responsável")
-            relato = st.text_area("Descrição do desenvolvimento/ocorrência")
-            btn_salvar = st.form_submit_button("Salvar Registro")
-            
-            if btn_salvar and relato and autor:
-                agora = datetime.now().strftime("%d/%m/%Y %H:%M")
-                c = conn.cursor()
-                c.execute("INSERT INTO registros (aluno_id, data_hora, autor, relato) VALUES (?, ?, ?, ?)", 
-                          (aluno_id, agora, autor, relato))
-                conn.commit()
-                st.success("Registro salvo!")
-                st.rerun()
-
-        # --- RELATÓRIOS E EXPORTAÇÃO ---
-        st.divider()
-        st.subheader("📊 Relatório Individual")
-        
-        if st.button("Gerar Relatório para Impressão/Envio"):
-            relatorio_texto = f"RELATÓRIO DE DESENVOLVIMENTO\nAluno: {aluno_selecionado_nome}\n"
-            relatorio_texto += f"Info Inicial: {aluno_info}\n"
-            relatorio_texto += "-"*30 + "\n"
-            for _, r in df_registros.iterrows():
-                relatorio_texto += f"[{r['data_hora']}] {r['autor']}: {r['relato']}\n"
-
-            st.text_area("Pré-visualização do Relatório", relatorio_texto, height=200)
-            
-            # Botões de Ação
-            col1, col2, col3 = st.columns(3)
+        # Formulário de novo registro
+        with st.form("novo_registro_diario", clear_on_submit=True):
+            col1, col2 = st.columns([1, 3])
             with col1:
-                st.download_button("📥 Baixar PDF (TXT Simulado)", relatorio_texto, file_name=f"relatorio_{aluno_selecionado_nome}.txt")
+                autor = st.text_input("Nome do Educador")
             with col2:
-                link_whatsapp = f"https://wa.me/?text={relatorio_texto[:500]}..." # Link simplificado
-                st.markdown(f"[📲 Enviar via WhatsApp]({link_whatsapp})")
-            with col3:
-                st.markdown(f"📧 [Enviar por Email](mailto:?subject=Relatorio_{aluno_selecionado_nome}&body={relatorio_texto})")
-
+                data_atual = datetime.now().strftime("%d/%m/%Y %H:%M")
+                st.write(f"**Data/Hora:** {data_atual}")
+            
+            relato = st.text_area("Relato do Desenvolvimento / Ocorrência Diária")
+            
+            if st.form_submit_button("Salvar Registro"):
+                if autor and relato:
+                    c = conn.cursor()
+                    c.execute("INSERT INTO registros (aluno_id, data_hora, autor, relato) VALUES (?, ?, ?, ?)", 
+                              (int(aluno_id), data_atual, autor, relato))
+                    conn.commit()
+                    st.success("💾 Registro salvo no histórico com sucesso!")
+                else:
+                    st.warning("⚠️ Preencha o nome do autor e o relato.")
 else:
-    st.write("Nenhum aluno cadastrado ainda.")
+    st.info("Nenhum aluno cadastrado. Use o formulário acima para começar.")
