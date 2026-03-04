@@ -55,53 +55,95 @@ with abas[0]:
     if not df_alunos.empty:
         aluno_sel = st.selectbox("Escolha o aluno:", df_alunos['nome'])
         dados = df_alunos[df_alunos['nome'] == aluno_sel].iloc[0]
+        aluno_id = int(dados['id'])
         
-        df_regs = pd.read_sql_query(f"SELECT data_hora, autor, relato FROM registros WHERE aluno_id={dados['id']} ORDER BY id DESC", conn)
+        # Carregar registros
+        df_regs = pd.read_sql_query(f"SELECT id, data_hora, autor, relato FROM registros WHERE aluno_id={aluno_id} ORDER BY id DESC", conn)
         
         st.subheader(f"Histórico Completo: {aluno_sel}")
-        st.caption(f"Info Inicial: {dados['info_inicial']}")
+        st.info(f"**Info Inicial:** {dados['info_inicial']}")
         
-        for _, r in df_regs.iterrows():
-            with st.expander(f"{r['data_hora']} - {r['autor']}"):
-                st.write(r['relato'])
+        # --- LÓGICA DE EDIÇÃO ---
+        st.write("---")
+        st.write("### ✍️ Histórico e Edição")
+        
+        for index, r in df_regs.iterrows():
+            with st.expander(f"📅 {r['data_hora']} — ✍️ {r['autor']}"):
+                # Criamos chaves únicas para os inputs usando o ID do registro
+                novo_autor = st.text_input("Autor", value=r['autor'], key=f"aut_{r['id']}")
+                novo_relato = st.text_area("Relato", value=r['relato'], key=f"rel_{r['id']}")
+                
+                col_edit, col_del = st.columns([1, 5])
+                if col_edit.button("Salvar Alteração", key=f"btn_{r['id']}"):
+                    c = conn.cursor()
+                    c.execute("UPDATE registros SET autor = ?, relato = ? WHERE id = ?", (novo_autor, novo_relato, r['id']))
+                    conn.commit()
+                    st.success("Alteração salva!")
+                    st.rerun()
+                
+                if col_del.button("Excluir", key=f"del_{r['id']}", help="Cuidado! A exclusão é permanente."):
+                    c = conn.cursor()
+                    c.execute("DELETE FROM registros WHERE id = ?", (r['id'],))
+                    conn.commit()
+                    st.warning("Registro excluído.")
+                    st.rerun()
 
-        # Botões de Envio
-        st.markdown("### 📤 Exportar")
+        # --- BOTÕES DE ENVIO ---
+        st.markdown("### 📤 Exportar Relatório")
         col1, col2, col3 = st.columns(3)
         
-        texto_share = f"Relatório: {aluno_sel}\n\nHistorico:\n" + "\n".join([f"- {r['relato']}" for _, r in df_regs.head(3).iterrows()])
+        # Prepara texto para WhatsApp/Email
+        texto_share = f"Relatório: {aluno_sel}\n\n"
+        if not df_regs.empty:
+            texto_share += f"Último Registro ({df_regs.iloc[0]['data_hora']}):\n{df_regs.iloc[0]['relato']}"
+        
         msg_enc = urllib.parse.quote(texto_share)
 
         with col1:
-            st.markdown(f'<a href="https://wa.me/?text={msg_enc}" target="_blank" style="background-color:#25D366;color:white;padding:10px;border-radius:5px;text-decoration:none;display:block;text-align:center;">WhatsApp</a>', unsafe_allow_html=True)
+            st.markdown(f'<a href="https://wa.me/?text={msg_enc}" target="_blank" style="background-color:#25D366;color:white;padding:12px;border-radius:8px;text-decoration:none;display:block;text-align:center;font-weight:bold;">📱 WhatsApp</a>', unsafe_allow_html=True)
         with col2:
-            st.markdown(f'<a href="mailto:?subject=Relatorio&body={msg_enc}" style="background-color:#EA4335;color:white;padding:10px;border-radius:5px;text-decoration:none;display:block;text-align:center;">E-mail</a>', unsafe_allow_html=True)
+            st.markdown(f'<a href="mailto:?subject=Relatorio_{aluno_sel}&body={msg_enc}" style="background-color:#EA4335;color:white;padding:12px;border-radius:8px;text-decoration:none;display:block;text-align:center;font-weight:bold;">📧 E-mail</a>', unsafe_allow_html=True)
         with col3:
-            pdf_bytes = gerar_pdf(aluno_sel, dados['info_inicial'], df_regs)
-            st.download_button("Baixar PDF", pdf_bytes, f"{aluno_sel}.pdf", "application/pdf")
+            if not df_regs.empty:
+                pdf_bytes = gerar_pdf(aluno_sel, dados['info_inicial'], df_regs)
+                st.download_button("📄 Baixar PDF", pdf_bytes, f"Relatorio_{aluno_sel}.pdf", "application/pdf")
+            else:
+                st.button("PDF indisponível (Sem registros)", disabled=True)
     else:
         st.info("Cadastre alunos na página inicial.")
 
 with abas[1]:
     st.header("⚙️ Central de Segurança")
+    st.write("Use esta área para manter seus dados seguros fora do servidor.")
     c1, c2 = st.columns(2)
     
     with c1:
-        st.subheader("Backup")
-        if st.button("Gerar Arquivo de Backup"):
+        st.subheader("1. Exportar Backup")
+        if st.button("Preparar arquivo de backup"):
             alunos = pd.read_sql_query("SELECT * FROM alunos", conn)
             registros = pd.read_sql_query("SELECT * FROM registros", conn)
-            b_data = {"alunos": alunos.to_dict('records'), "registros": registros.to_dict('records')}
-            st.download_button("⬇️ Baixar JSON", json.dumps(b_data), f"backup_{datetime.now().strftime('%Y%m%d')}.json", "application/json")
+            b_data = {
+                "alunos": alunos.to_dict('records'), 
+                "registros": registros.to_dict('records')
+            }
+            st.download_button(
+                label="⬇️ Baixar JSON", 
+                data=json.dumps(b_data, indent=4), 
+                file_name=f"backup_escola_{datetime.now().strftime('%Y%m%d')}.json", 
+                mime="application/json"
+            )
 
     with c2:
-        st.subheader("Restaurar")
-        up = st.file_uploader("Suba o arquivo .json", type="json")
-        if up and st.button("Confirmar Restauração"):
+        st.subheader("2. Restaurar Backup")
+        up = st.file_uploader("Suba o arquivo .json de backup", type="json")
+        if up and st.button("Confirmar Restauração (Sobrescreve dados atuais)"):
             data = json.loads(up.getvalue().decode())
             c = conn.cursor()
-            c.execute("DELETE FROM alunos"); c.execute("DELETE FROM registros")
-            for a in data['alunos']: c.execute("INSERT INTO alunos VALUES (?,?,?)", (a['id'], a['nome'], a['info_inicial']))
-            for r in data['registros']: c.execute("INSERT INTO registros VALUES (?,?,?,?,?)", (r['id'], r['aluno_id'], r['data_hora'], r['autor'], r['relato']))
+            c.execute("DELETE FROM alunos")
+            c.execute("DELETE FROM registros")
+            for a in data['alunos']:
+                c.execute("INSERT INTO alunos (id, nome, info_inicial) VALUES (?,?,?)", (a['id'], a['nome'], a['info_inicial']))
+            for r in data['registros']:
+                c.execute("INSERT INTO registros (id, aluno_id, data_hora, autor, relato) VALUES (?,?,?,?,?)", (r['id'], r['aluno_id'], r['data_hora'], r['autor'], r['relato']))
             conn.commit()
-            st.success("Dados restaurados!")
+            st.success("✅ Dados restaurados com sucesso! Recarregue o app.")
