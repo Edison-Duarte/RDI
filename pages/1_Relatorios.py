@@ -3,10 +3,12 @@ import pandas as pd
 from supabase import create_client, Client
 import urllib.parse
 from fpdf import FPDF
+import json
+from datetime import datetime
 
 st.set_page_config(page_title="Relatórios e Gestão", layout="wide", page_icon="📊")
 
-# Conexão
+# Conexão segura com Supabase
 url: str = st.secrets["SUPABASE_URL"]
 key: str = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(url, key)
@@ -28,6 +30,7 @@ def gerar_pdf(nome, info_ini, registros):
 
 st.title("📊 Gestão de Alunos e Relatórios")
 
+# Carregar dados do Supabase
 res_alunos = supabase.table("alunos").select("*").order("nome").execute()
 df_alunos = pd.DataFrame(res_alunos.data)
 
@@ -36,7 +39,7 @@ if not df_alunos.empty:
     dados_aluno = df_alunos[df_alunos['nome'] == aluno_sel].iloc[0]
     aluno_id = int(dados_aluno['id'])
 
-    aba1, aba2 = st.tabs(["📝 Editar Dados Aluno", "📜 Relatório e Histórico"])
+    aba1, aba2, aba3 = st.tabs(["📝 Editar Aluno", "📜 Histórico e Relatório", "💾 Segurança e Backup"])
 
     with aba1:
         st.subheader("Editar Cadastro do Aluno")
@@ -66,7 +69,6 @@ if not df_alunos.empty:
                         st.warning("Excluído!")
                         st.rerun()
 
-            # Exportação
             st.divider()
             col1, col2, col3 = st.columns(3)
             txt_share = f"Relatorio {aluno_sel}\n\n{dados_aluno['info_inicial']}"
@@ -80,6 +82,42 @@ if not df_alunos.empty:
                 pdf_bytes = gerar_pdf(aluno_sel, dados_aluno['info_inicial'], df_regs)
                 st.download_button("📄 PDF", pdf_bytes, f"{aluno_sel}.pdf", "application/pdf")
         else:
-            st.warning("Nenhum histórico encontrado para este aluno.")
+            st.warning("Nenhum histórico encontrado.")
+
+    with aba3:
+        st.header("⚙️ Central de Backup (JSON)")
+        st.write("Exporte seus dados da nuvem para o seu computador ou restaure um backup anterior.")
+        
+        c_back1, c_back2 = st.columns(2)
+        
+        with c_back1:
+            st.subheader("Extrair da Nuvem")
+            if st.button("Gerar arquivo de Backup"):
+                all_alunos = supabase.table("alunos").select("*").execute().data
+                all_regs = supabase.table("registros").select("*").execute().data
+                backup_completo = {"alunos": all_alunos, "registros": all_regs}
+                st.download_button(
+                    label="⬇️ Baixar Backup (.json)",
+                    data=json.dumps(backup_completo, indent=4),
+                    file_name=f"backup_nuvem_{datetime.now().strftime('%Y%m%d')}.json",
+                    mime="application/json"
+                )
+
+        with c_back2:
+            st.subheader("Restaurar para Nuvem")
+            up = st.file_uploader("Selecione o arquivo .json", type="json")
+            if up and st.button("🚀 Enviar para o Banco de Dados"):
+                data = json.loads(up.getvalue().decode())
+                # Limpa dados atuais para evitar conflitos de ID
+                supabase.table("registros").delete().neq("id", 0).execute()
+                supabase.table("alunos").delete().neq("id", 0).execute()
+                
+                # Insere novamente
+                if data['alunos']:
+                    supabase.table("alunos").insert(data['alunos']).execute()
+                if data['registros']:
+                    supabase.table("registros").insert(data['registros']).execute()
+                st.success("✅ Banco de dados na nuvem restaurado com sucesso!")
+                st.rerun()
 else:
     st.info("Cadastre alunos primeiro.")
