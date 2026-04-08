@@ -4,15 +4,41 @@ from supabase import create_client, Client
 from datetime import datetime
 
 # Configuração da Página
-st.set_page_config(page_title="Registro Escolar Supabase", layout="wide", page_icon="🏫")
+st.set_page_config(page_title="Registro Escolar", layout="wide", page_icon="🏫")
 
-# Conexão com Supabase (Pegando dos Secrets do Streamlit)
-url: str = st.secrets["SUPABASE_URL"]
-key: str = st.secrets["SUPABASE_KEY"]
-supabase: Client = create_client(url, key)
+# --- CONEXÃO SEGURA ---
+@st.cache_resource
+def init_supabase():
+    try:
+        url: str = st.secrets["SUPABASE_URL"]
+        key: str = st.secrets["SUPABASE_KEY"]
+        return create_client(url, key)
+    except Exception:
+        return None
 
+supabase = init_supabase()
+
+# Função para buscar alunos com tratamento de erro
+def get_alunos_safe():
+    if supabase is None:
+        st.error("Credenciais do Supabase não configuradas nos Secrets.")
+        st.stop()
+    try:
+        res = supabase.table("alunos").select("*").order("nome").execute()
+        return pd.DataFrame(res.data)
+    except Exception as e:
+        # Se der erro de conexão (banco pausado)
+        st.error("🔴 O Banco de Dados está offline ou pausado.")
+        st.info("Acesse o painel do Supabase e clique em 'Restore Project' para reativar o sistema.")
+        st.stop()
+
+# Título do App
 st.title("🏫 Registro de Desenvolvimento (Nuvem)")
 
+# Carregamento de dados (usando a função segura)
+df_alunos = get_alunos_safe()
+
+# --- DAQUI PARA BAIXO SEGUE O RESTANTE DO SEU CÓDIGO DE CADASTRO ---
 # --- CADASTRO DE ALUNOS ---
 with st.expander("🆕 Cadastrar Novo Aluno"):
     with st.form("form_cadastro", clear_on_submit=True):
